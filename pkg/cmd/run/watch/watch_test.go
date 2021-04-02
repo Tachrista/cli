@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/ioutil"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 
@@ -97,18 +98,61 @@ func TestNewCmdWatch(t *testing.T) {
 }
 
 func TestWatchRun(t *testing.T) {
+	runStubs := func(reg *httpmock.Registry) {
+		inProgressRun := shared.TestRun("more runs", 2, shared.InProgress, "")
+		completedRun := shared.TestRun("more runs", 2, shared.Completed, shared.Success)
+		reg.Register(
+			httpmock.REST("GET", "repos/OWNER/REPO/actions/runs"),
+			httpmock.JSONResponse(shared.RunsPayload{
+				WorkflowRuns: []shared.Run{
+					shared.TestRun("run", 1, shared.InProgress, ""),
+					inProgressRun,
+				},
+			}))
+		reg.Register(
+			httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
+			httpmock.JSONResponse(inProgressRun))
+		reg.Register(
+			httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
+			httpmock.JSONResponse(inProgressRun))
+		reg.Register(
+			httpmock.REST("GET", "runs/2/jobs"),
+			httpmock.JSONResponse(shared.JobsPayload{
+				Jobs: []shared.Job{
+					shared.SuccessfulJob,
+				},
+			}))
+		reg.Register(
+			httpmock.REST("GET", "repos/OWNER/REPO/check-runs/10/annotations"),
+			httpmock.JSONResponse([]shared.Annotation{}))
+		reg.Register(
+			httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
+			httpmock.JSONResponse(completedRun))
+		reg.Register(
+			httpmock.REST("GET", "runs/2/jobs"),
+			httpmock.JSONResponse(shared.JobsPayload{
+				Jobs: []shared.Job{
+					shared.SuccessfulJob,
+				},
+			}))
+		reg.Register(
+			httpmock.REST("GET", "repos/OWNER/REPO/check-runs/10/annotations"),
+			httpmock.JSONResponse([]shared.Annotation{}))
+	}
+
 	tests := []struct {
-		name      string
-		httpStubs func(*httpmock.Registry)
-		askStubs  func(*prompt.AskStubber)
-		opts      *WatchOptions
-		tty       bool
-		wantErr   bool
-		errMsg    string
-		wantOut   string
+		name        string
+		httpStubs   func(*httpmock.Registry)
+		askStubs    func(*prompt.AskStubber)
+		opts        *WatchOptions
+		tty         bool
+		wantErr     bool
+		errMsg      string
+		wantOut     string
+		onlyWindows bool
+		skipWindows bool
 	}{
 		// TODO exit status respected
-		// TODO interval respected (how do?)
 		{
 			name: "run ID provided run already completed",
 			opts: &WatchOptions{
@@ -140,40 +184,42 @@ func TestWatchRun(t *testing.T) {
 			},
 		},
 		{
-			name: "interval respected",
+			name:        "interval respected",
+			skipWindows: true,
 			opts: &WatchOptions{
 				Interval: 0,
 				Prompt:   true,
 			},
-			httpStubs: func(reg *httpmock.Registry) {
-				inProgressRun := shared.TestRun("more runs", 2, shared.InProgress, "")
-				completedRun := shared.TestRun("more runs", 2, shared.Completed, shared.Success)
-				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs"),
-					httpmock.JSONResponse(shared.RunsPayload{
-						WorkflowRuns: []shared.Run{
-							shared.TestRun("run", 1, shared.InProgress, ""),
-							inProgressRun,
-						},
-					}))
-				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
-					httpmock.JSONResponse(inProgressRun))
-				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
-					httpmock.JSONResponse(inProgressRun))
-				reg.Register(
-					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
-					httpmock.JSONResponse(completedRun))
-			},
+			httpStubs: runStubs,
 			askStubs: func(as *prompt.AskStubber) {
 				as.StubOne(1)
 			},
-			wantOut: "TODO",
+			wantOut: "\x1b[2J\x1b[0;0H\x1b[JRefreshing run status every 0 seconds. Press Ctrl+C to quit.\n\n- trunk more runs · 2\nTriggered via push about 59 minutes ago\n\nJOBS\n✓ cool job in 4m34s (ID 10)\n  ✓ fob the barz\n  ✓ barz the fob\n\x1b[0;0H\x1b[JRefreshing run status every 0 seconds. Press Ctrl+C to quit.\n\n✓ trunk more runs · 2\nTriggered via push about 59 minutes ago\n\nJOBS\n✓ cool job in 4m34s (ID 10)\n  ✓ fob the barz\n  ✓ barz the fob\n",
+		},
+		{
+			name:        "interval respected, windows",
+			onlyWindows: true,
+			opts: &WatchOptions{
+				Interval: 0,
+				Prompt:   true,
+			},
+			httpStubs: runStubs,
+			askStubs: func(as *prompt.AskStubber) {
+				as.StubOne(1)
+			},
+			wantOut: "\x1b[2J\x1b[2JRefreshing run status every 0 seconds. Press Ctrl+C to quit.\n\n- trunk more runs · 2\nTriggered via push about 59 minutes ago\n\nJOBS\n✓ cool job in 4m34s (ID 10)\n  ✓ fob the barz\n  ✓ barz the fob\n\x1b[2JRefreshing run status every 0 seconds. Press Ctrl+C to quit.\n\n✓ trunk more runs · 2\nTriggered via push about 59 minutes ago\n\nJOBS\n✓ cool job in 4m34s (ID 10)\n  ✓ fob the barz\n  ✓ barz the fob\n",
 		},
 	}
 
 	for _, tt := range tests {
+		if runtime.GOOS == "windows" {
+			if tt.skipWindows {
+				continue
+			}
+		} else if tt.onlyWindows {
+			continue
+		}
+
 		reg := &httpmock.Registry{}
 		tt.httpStubs(reg)
 		tt.opts.HttpClient = func() (*http.Client, error) {

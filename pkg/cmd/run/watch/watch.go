@@ -116,13 +116,11 @@ func watchRun(opts *WatchOptions) error {
 
 	// TODO test on macos
 
-	// clear entire screen
 	if runtime.GOOS == "windows" {
 		opts.IO.EnableVirtualTerminalProcessing()
-		fmt.Fprintf(opts.IO.Out, "\x1b[2J")
-	} else {
-		fmt.Fprint(opts.IO.Out, "\033[2J")
 	}
+	// clear entire screen
+	fmt.Fprintf(opts.IO.Out, "\x1b[2J")
 
 	for run.Status != shared.Completed {
 		run, err = renderRun(*opts, client, repo, run, prNumber)
@@ -178,9 +176,9 @@ func renderRun(opts WatchOptions, client *api.Client, repo ghrepo.Interface, run
 		fmt.Fprintf(opts.IO.Out, "\x1b[2J")
 	} else {
 		// Move cursor to 0,0
-		fmt.Fprint(opts.IO.Out, "\033[0;0H")
+		fmt.Fprint(opts.IO.Out, "\x1b[0;0H")
 		// Clear from cursor to bottom of screen
-		fmt.Fprint(opts.IO.Out, "\033[J")
+		fmt.Fprint(opts.IO.Out, "\x1b[J")
 	}
 
 	fmt.Fprintln(out, cs.Boldf("Refreshing run status every %d seconds. Press Ctrl+C to quit.", opts.Interval))
