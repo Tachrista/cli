@@ -35,8 +35,6 @@ func NewCmdWatch(f *cmdutil.Factory, runF func(*WatchOptions) error) *cobra.Comm
 		IO:         f.IOStreams,
 		HttpClient: f.HttpClient,
 		Now:        time.Now,
-		// TODO allow setting via flag?
-		Interval: 2,
 	}
 
 	cmd := &cobra.Command{
@@ -63,6 +61,7 @@ func NewCmdWatch(f *cmdutil.Factory, runF func(*WatchOptions) error) *cobra.Comm
 		},
 	}
 	cmd.Flags().BoolVar(&opts.ExitStatus, "exit-status", false, "Exit with non-zero status if run fails")
+	cmd.Flags().IntVarP(&opts.Interval, "interval", "i", 2, "Refresh interval in seconds")
 
 	return cmd
 }
