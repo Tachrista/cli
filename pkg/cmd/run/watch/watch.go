@@ -21,8 +21,9 @@ type WatchOptions struct {
 	HttpClient func() (*http.Client, error)
 	BaseRepo   func() (ghrepo.Interface, error)
 
-	RunID    string
-	Interval int
+	RunID      string
+	Interval   int
+	ExitStatus bool
 
 	Prompt bool
 
@@ -61,6 +62,7 @@ func NewCmdWatch(f *cmdutil.Factory, runF func(*WatchOptions) error) *cobra.Comm
 			return watchRun(opts)
 		},
 	}
+	cmd.Flags().BoolVar(&opts.ExitStatus, "exit-status", false, "Exit with non-zero status if run fails")
 
 	return cmd
 }
@@ -113,7 +115,7 @@ func watchRun(opts *WatchOptions) error {
 	// clear entire screen
 	if runtime.GOOS == "windows" {
 		opts.IO.EnableVirtualTerminalProcessing()
-		fmt.Printf(opts.IO.Out, "\x1b[2J")
+		fmt.Fprintf(opts.IO.Out, "\x1b[2J")
 	} else {
 		fmt.Fprint(opts.IO.Out, "\033[2J")
 	}
@@ -124,6 +126,10 @@ func watchRun(opts *WatchOptions) error {
 			return err
 		}
 		time.Sleep(time.Duration(opts.Interval * 1000))
+	}
+
+	if opts.ExitStatus && run.Conclusion != shared.Success {
+		return cmdutil.SilentError
 	}
 
 	return nil
@@ -165,7 +171,7 @@ func renderRun(opts WatchOptions, client *api.Client, repo ghrepo.Interface, run
 
 	if runtime.GOOS == "windows" {
 		// Just clear whole screen; I wasn't able to get the nicer cursor movement thing working
-		fmt.Printf(opts.IO.Out, "\x1b[2J")
+		fmt.Fprintf(opts.IO.Out, "\x1b[2J")
 	} else {
 		// Move cursor to 0,0
 		fmt.Fprint(opts.IO.Out, "\033[0;0H")
