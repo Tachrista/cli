@@ -38,9 +38,11 @@ func NewCmdWatch(f *cmdutil.Factory, runF func(*WatchOptions) error) *cobra.Comm
 	}
 
 	cmd := &cobra.Command{
-		Use:    "watch <run-selector>",
-		Short:  "Runs until a run completes, showing its progress",
-		Hidden: true,
+		Use:   "watch <run-selector>",
+		Short: "Runs until a run completes, showing its progress",
+		Annotations: map[string]string{
+			"IsActions": "true",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// support `-R, --repo` override
 			opts.BaseRepo = f.BaseRepo
@@ -87,6 +89,9 @@ func watchRun(opts *WatchOptions) error {
 		})
 		if err != nil {
 			return fmt.Errorf("failed to get runs: %w", err)
+		}
+		if len(runs) == 0 {
+			return fmt.Errorf("found no in progress runs to watch")
 		}
 		runID, err = shared.PromptForRun(cs, runs)
 		if err != nil {
@@ -184,7 +189,6 @@ func renderRun(opts WatchOptions, client *api.Client, repo ghrepo.Interface, run
 	fmt.Fprintln(out)
 
 	if len(jobs) == 0 && run.Conclusion == shared.Failure {
-		// TODO are we supporting exit status here?
 		return run, nil
 	}
 
@@ -197,11 +201,6 @@ func renderRun(opts WatchOptions, client *api.Client, repo ghrepo.Interface, run
 		fmt.Fprintln(out, cs.Bold("ANNOTATIONS"))
 		fmt.Fprintln(out, shared.RenderAnnotations(cs, annotations))
 	}
-
-	// TODO supporting exit status?
-	//if opts.ExitStatus && shared.IsFailureState(run.Conclusion) {
-	//	return cmdutil.SilentError
-	//}
 
 	return run, nil
 }

@@ -3,10 +3,16 @@ package watch
 import (
 	"bytes"
 	"io/ioutil"
+	"net/http"
 	"testing"
+	"time"
 
+	"github.com/cli/cli/internal/ghrepo"
+	"github.com/cli/cli/pkg/cmd/run/shared"
 	"github.com/cli/cli/pkg/cmdutil"
+	"github.com/cli/cli/pkg/httpmock"
 	"github.com/cli/cli/pkg/iostreams"
+	"github.com/cli/cli/pkg/prompt"
 	"github.com/google/shlex"
 	"github.com/stretchr/testify/assert"
 )
@@ -90,4 +96,122 @@ func TestNewCmdWatch(t *testing.T) {
 	}
 }
 
-// TODO execution tests
+func TestWatchRun(t *testing.T) {
+	tests := []struct {
+		name      string
+		httpStubs func(*httpmock.Registry)
+		askStubs  func(*prompt.AskStubber)
+		opts      *WatchOptions
+		tty       bool
+		wantErr   bool
+		errMsg    string
+		wantOut   string
+	}{
+		// TODO exit status respected
+		// TODO interval respected (how do?)
+		{
+			name: "run ID provided run already completed",
+			opts: &WatchOptions{
+				RunID: "1234",
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/1234"),
+					httpmock.JSONResponse(shared.FailedRun))
+			},
+			wantOut: "",
+		},
+		{
+			name: "prompt, no in progress runs",
+			opts: &WatchOptions{
+				Prompt: true,
+			},
+			wantErr: true,
+			errMsg:  "found no in progress runs to watch",
+			httpStubs: func(reg *httpmock.Registry) {
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs"),
+					httpmock.JSONResponse(shared.RunsPayload{
+						WorkflowRuns: []shared.Run{
+							shared.FailedRun,
+							shared.SuccessfulRun,
+						},
+					}))
+			},
+		},
+		{
+			name: "interval respected",
+			opts: &WatchOptions{
+				Interval: 0,
+				Prompt:   true,
+			},
+			httpStubs: func(reg *httpmock.Registry) {
+				inProgressRun := shared.TestRun("more runs", 2, shared.InProgress, "")
+				completedRun := shared.TestRun("more runs", 2, shared.Completed, shared.Success)
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs"),
+					httpmock.JSONResponse(shared.RunsPayload{
+						WorkflowRuns: []shared.Run{
+							shared.TestRun("run", 1, shared.InProgress, ""),
+							inProgressRun,
+						},
+					}))
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
+					httpmock.JSONResponse(inProgressRun))
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
+					httpmock.JSONResponse(inProgressRun))
+				reg.Register(
+					httpmock.REST("GET", "repos/OWNER/REPO/actions/runs/2"),
+					httpmock.JSONResponse(completedRun))
+			},
+			askStubs: func(as *prompt.AskStubber) {
+				as.StubOne(1)
+			},
+			wantOut: "TODO",
+		},
+	}
+
+	for _, tt := range tests {
+		reg := &httpmock.Registry{}
+		tt.httpStubs(reg)
+		tt.opts.HttpClient = func() (*http.Client, error) {
+			return &http.Client{Transport: reg}, nil
+		}
+
+		tt.opts.Now = func() time.Time {
+			notnow, _ := time.Parse("2006-01-02 15:04:05", "2021-02-23 05:50:00")
+			return notnow
+		}
+
+		io, _, stdout, _ := iostreams.Test()
+		io.SetStdoutTTY(tt.tty)
+		tt.opts.IO = io
+		tt.opts.BaseRepo = func() (ghrepo.Interface, error) {
+			return ghrepo.FromFullName("OWNER/REPO")
+		}
+
+		as, teardown := prompt.InitAskStubber()
+		defer teardown()
+		if tt.askStubs != nil {
+			tt.askStubs(as)
+		}
+
+		t.Run(tt.name, func(t *testing.T) {
+			err := watchRun(tt.opts)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, tt.errMsg, err.Error())
+				if !tt.opts.ExitStatus {
+					return
+				}
+			}
+			if !tt.opts.ExitStatus {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantOut, stdout.String())
+			reg.Verify(t)
+		})
+	}
+}
